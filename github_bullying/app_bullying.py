@@ -54,13 +54,6 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def predict(self, X):
         return np.argmax(self.predict_proba(X), axis=1)
-        
-        # 3. 예측 확률 계산
-        probas = np.array([est.predict_proba(X) for est in estimators])
-        return np.average(probas, axis=0, weights=normalized_weights)
-
-    def predict(self, X):
-        return np.argmax(self.predict_proba(X), axis=1)
     
 # Page settings
 
