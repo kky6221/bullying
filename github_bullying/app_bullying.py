@@ -106,16 +106,12 @@ def load_assets():
     bundle = joblib.load(MODEL_PATH)
     feature_names = joblib.load(FEATURE_PATH)
 
-    # bundle이 딕셔너리 형태로 저장된 경우와 모델 객체로 직접 저장된 경우 모두 처리
     if isinstance(bundle, dict):
         model = bundle.get("model", bundle)
         threshold = bundle.get("threshold", None)
     else:
         model = bundle
         threshold = None
-
-    # 🚨 [핵심 해결책] 불러온 과거의 모델 객체에, 현재 파일에서 새로 수정한 클래스를 강제로 주입합니다.
-    model.__class__ = VotingEnsembleClassifier
 
     feature_names = [str(x) for x in feature_names]
 
