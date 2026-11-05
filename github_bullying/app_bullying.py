@@ -6,7 +6,132 @@ import pandas as pd
 import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-# 내/외부 가중치 에러를 완벽히 우회하는 클래스 정의
+
+def identify_model_type(name, estimator):
+
+    name_text = str(name).lower()
+    class_text = estimator.__class__.__name__.lower()
+
+    # Pipeline 내부 모델 확인
+    if hasattr(estimator, "named_steps"):
+        class_text += " " + " ".join(
+            step.__class__.__name__.lower()
+            for step in estimator.named_steps.values()
+        )
+
+    combined = name_text + " " + class_text
+
+    if "lightgbm" in combined or "lgbm" in combined:
+        return "lgbm"
+
+    if "randomforest" in combined or name_text.strip() == "rf":
+        return "rf"
+
+    return None
+
+
+def extract_base_models(model):
+
+    # sklearn VotingClassifier인 경우
+    if hasattr(model, "estimators_") and hasattr(model, "estimators"):
+
+        fitted = model.estimators_
+        configured = model.estimators
+
+        if len(fitted) == len(configured):
+
+            result = []
+
+            for spec, est in zip(configured, fitted):
+
+                if est is None or est == "drop":
+                    continue
+
+                name = spec[0] if isinstance(spec, tuple) else est.__class__.__name__
+
+                result.append((name, est))
+
+            return result
+
+    # Custom VotingEnsembleClassifier인 경우
+    estimators = getattr(model, "estimators", None)
+
+    if estimators is None:
+        estimators = model.__dict__.get("estimators_", None)
+
+    if estimators is None:
+        raise ValueError("Cannot find ensemble estimators.")
+
+    result = []
+
+    for item in estimators:
+
+        if isinstance(item, tuple):
+            name, est = item
+        else:
+            est = item
+            name = est.__class__.__name__
+
+        result.append((name, est))
+
+    return result
+
+
+def weighted_predict_proba(model, X):
+
+    base_models = extract_base_models(model)
+
+    lgbm_prob = None
+    rf_prob = None
+
+    for name, estimator in base_models:
+
+        model_type = identify_model_type(name, estimator)
+
+        if model_type is None:
+            continue
+
+        # Individual model prediction
+        p = estimator.predict_proba(X)
+
+        classes = np.asarray(estimator.classes_)
+        positive_idx = np.where(classes == 1)[0]
+
+        if len(positive_idx) != 1:
+            raise ValueError(
+                f"Positive class 1 not found in {name}."
+            )
+
+        positive_prob = float(p[0, positive_idx[0]])
+
+        if model_type == "lgbm":
+            if lgbm_prob is not None:
+                raise ValueError("Multiple LightGBM models found.")
+            lgbm_prob = positive_prob
+
+        elif model_type == "rf":
+            if rf_prob is not None:
+                raise ValueError("Multiple Random Forest models found.")
+            rf_prob = positive_prob
+
+    # 두 모델 모두 확인
+    if lgbm_prob is None:
+        raise ValueError("LightGBM model was not found.")
+
+    if rf_prob is None:
+        raise ValueError("Random Forest model was not found.")
+
+    # Fixed weighted ensemble: 80% + 20%
+    final_prob = (
+        0.8 * lgbm_prob
+        + 0.2 * rf_prob
+    )
+
+    return np.array([
+        [1.0 - final_prob, final_prob]
+    ])
+
+
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def __init__(self, estimators=None, weights=None):
@@ -14,34 +139,16 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         self.weights = weights
 
     def fit(self, X, y):
+        self.classes_ = np.unique(y)
         return self
 
     def predict_proba(self, X):
-        # 1. 저장된 개별 모델 리스트 가져오기
-        estimators = (
-            getattr(self, "estimators", None)
-            or getattr(self, "estimators_", None)
-            or self.__dict__.get("estimators", [])
-        )
-
-        probas_list = []
-        for est in estimators:
-            try:
-                # 개별 모델 예측값 구하기
-                p = est.predict_proba(X)
-                probas_list.append(p)
-            except Exception:
-                pass
-
-        # 개별 모델 호출 실패 시 백업 방어
-        if not probas_list:
-            return np.array([[0.5, 0.5]])
-
-        # 2. numpy 평균 계산 (weights 파라미터 사용 안 함)
-        return np.mean(probas_list, axis=0)
+        return weighted_predict_proba(self, X)
 
     def predict(self, X):
-        return np.argmax(self.predict_proba(X), axis=1)
+        return (
+            self.predict_proba(X)[:, 1] >= 0.5
+        ).astype(int)
     
 # Page settings
 
@@ -100,26 +207,53 @@ MODEL_PATH = BASE_DIR / "ensemble_lgbm_rf.joblib"
 FEATURE_PATH = BASE_DIR / "feature_names.pkl"
 
 
+
 @st.cache_resource
 def load_assets():
+
     bundle = joblib.load(MODEL_PATH)
+
     feature_names = joblib.load(FEATURE_PATH)
 
-    # bundle이 딕셔너리 형태로 저장된 경우와 모델 객체로 직접 저장된 경우 모두 처리
     if isinstance(bundle, dict):
+
         model = bundle.get("model", bundle)
         threshold = bundle.get("threshold", None)
+
     else:
+
         model = bundle
         threshold = None
 
     feature_names = [str(x) for x in feature_names]
 
-    # n_features_in_ 속성이 존재하고 None이 아닐 때만 개수 검증 수행
-    expected_n = getattr(model, "n_features_in_", None)
-    if expected_n is not None and len(feature_names) != expected_n:
+    # 앙상블 구조 및 개별 모델 확인
+    base_models = extract_base_models(model)
+
+    model_types = [
+        identify_model_type(name, est)
+        for name, est in base_models
+    ]
+
+    if model_types.count("lgbm") != 1:
         raise ValueError(
-            f"Feature mismatch: model expects {expected_n} features but feature_names.pkl contains {len(feature_names)}."
+            "Exactly one LightGBM model is required."
+        )
+
+    if model_types.count("rf") != 1:
+        raise ValueError(
+            "Exactly one Random Forest model is required."
+        )
+
+    # Feature dimension 확인
+    expected_n = getattr(model, "n_features_in_", None)
+
+    if expected_n is not None and len(feature_names) != expected_n:
+
+        raise ValueError(
+            f"Feature mismatch: model expects {expected_n} "
+            f"features but feature_names.pkl contains "
+            f"{len(feature_names)}."
         )
 
     return model, threshold, feature_names
@@ -224,91 +358,113 @@ def encode_input(values, ordered_features):
 
 # Prediction
 
-if st.button("Predict probability", type="primary", use_container_width=True):
+
+# =========================================================
+# Prediction
+# =========================================================
+
+if st.button(
+    "Predict probability",
+    type="primary",
+    use_container_width=True
+):
+
     try:
-        X_input = encode_input(raw_values, feature_names)
 
-        # 1. 모델 내부에서 개별 estimators 리스트 탐색
-        estimators = None
-        for attr in ["estimators", "estimators_", "models", "clfs", "_estimators"]:
-            if hasattr(model, attr) and getattr(model, attr):
-                estimators = getattr(model, attr)
-                break
-        
-        # 딕셔너리 형태일 경우 탐색
-        if estimators is None and hasattr(model, "__dict__"):
-            for k, v in model.__dict__.items():
-                if isinstance(v, (list, tuple)) and len(v) > 0 and hasattr(v[0], "predict_proba"):
-                    estimators = v
-                    break
+        X_input = encode_input(
+            raw_values,
+            feature_names
+        )
 
-        # 2. 개별 모델들로부터 실제 예측 확률 추출 및 평균 계산
-        if estimators:
-            preds = []
-            for est in estimators:
-                # 개별 모델 예측 실행
-                p = est.predict_proba(X_input)
-                # 클래스 1(발생)에 대한 확률값 추출
-                preds.append(float(p[0, 1]))
-            
-            # 실제 예측된 확률들의 평균 계산
-            prob = float(np.mean(preds))
-        else:
-            # 최종 앙상블 객체 단독 실행 시도
-            prob = float(model.predict_proba(X_input)[0, 1])
+        # LightGBM 80% + RF 20%
+        probabilities = weighted_predict_proba(
+            model,
+            X_input
+        )
+
+        prob = float(probabilities[0, 1])
 
         st.markdown("---")
+
         st.markdown("## Prediction result")
 
         with st.container(border=True):
+
             st.markdown(
                 f"""
-                <div class="result-label">Model-estimated probability</div>
-                <div class="result-number">{prob:.1%}</div>
+                <div class="result-label">
+                    Model-estimated probability
+                </div>
+
+                <div class="result-number">
+                    {prob:.1%}
+                </div>
                 """,
-                unsafe_allow_html=True,
+                unsafe_allow_html=True
             )
 
         with st.container(border=True):
+
             st.markdown("#### What this means")
+
             st.write(
-                "This percentage is the model-estimated probability of behavioral character-related bullying "
-                "based on the information entered above. A higher percentage indicates a higher predicted probability."
+                "This percentage represents the model-estimated "
+                "probability of bullying victimization among adolescents "
+                "based on the information entered above. "
+                "A higher percentage indicates a higher predicted probability."
             )
 
         with st.container(border=True):
+
             st.markdown("#### Keep in mind")
+
             st.write(
-                "This estimate reflects model predictions and may not represent an individual's actual healthcare access. "
-                "It is intended for research and educational use."
+                "This estimate reflects model predictions and may not "
+                "represent an individual's actual experience. "
+                "It should be used for research and educational purposes "
+                "and should not be interpreted as a definitive assessment "
+                "of individual bullying risk."
             )
 
         with st.expander("View information used for this prediction"):
-            display_df = pd.DataFrame(
-                [
-                    {
-                        "Sex": sex_label,
-                        "Grade": grade_label,
-                        "Region of residence": region_label,
-                        "Academic achievement": academic_label,
-                        "Household income": income_label,
-                        "BMI group": bmi_label,
-                        "Sadness and despair": sadness_label,
-                        "Subjective body shape perception": body_label,
-                        "Smoking status": smoking_label,
-                        "Alcohol consumption": alcohol_label,
-                        "Screentime status": screentime_label,
-                        "Physical activity": pa_label,
-                        "Recommended sleep duration": sleep_label,
-                    }
-                ]
-            )
+
+            display_df = pd.DataFrame([
+                {
+                    "Sex": sex_label,
+                    "Grade": grade_label,
+                    "Region of residence": region_label,
+                    "Academic achievement": academic_label,
+                    "Household income": income_label,
+                    "BMI group": bmi_label,
+                    "Sadness and despair": sadness_label,
+                    "Subjective body shape perception": body_label,
+                    "Smoking status": smoking_label,
+                    "Alcohol consumption": alcohol_label,
+                    "Screentime status": screentime_label,
+                    "Physical activity": pa_label,
+                    "Recommended sleep duration": sleep_label
+                }
+            ])
+
             st.dataframe(
-                display_df, use_container_width=True, hide_index=True
+                display_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        with st.expander("View model configuration"):
+
+            st.write("Ensemble model: LightGBM + Random Forest")
+
+            st.write("LightGBM weight: 80%")
+
+            st.write("Random Forest weight: 20%")
+
+            st.write(
+                f"LightGBM predicted probability: "
+                f"{probabilities[0, 1]:.4f}"
             )
 
     except Exception as e:
-        st.error(f"Prediction failed: {e}")
 
-    except Exception as e:
         st.error(f"Prediction failed: {e}")
