@@ -15,30 +15,38 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         return self
 
     def predict_proba(self, X):
-        # 1. 모델 추출 (sklearn 호환성 보장)
-        estimators = getattr(self, "estimators_", None)
-        if estimators is None:
-            estimators = getattr(self, "estimators", [])
+        # 1. 모델 추출: 원본 코드의 추출 방식을 복원하여 누락 방지
+        raw_estimators = getattr(self, "estimators", None)
+        if raw_estimators is None:
+            raw_estimators = self.__dict__.get("estimators", [])
         
-        # 튜플 형태(이름, 모델)로 저장된 경우 모델(객체)만 추출
-        if estimators and isinstance(estimators[0], tuple):
-            estimators = [est for _, est in estimators]
+        if not raw_estimators:
+            raw_estimators = getattr(self, "estimators_", [])
             
-        if not estimators:
-            raise ValueError("앙상블에 포함된 예측 모델(estimators)이 없습니다.")
+        # 2. 저장 형태에 상관없이 유연하게 모델 객체만 골라내기
+        models = []
+        for est in raw_estimators:
+            # scikit-learn 기본 형태인 ('모델이름', 모델객체) 튜플인 경우
+            if isinstance(est, tuple) and len(est) == 2:
+                models.append(est[1])
+            # 리스트 안에 바로 모델 객체가 들어있는 경우
+            else:
+                models.append(est)
 
-        # 2. 모든 개별 모델의 예측 확률 계산
-        probas = np.array([est.predict_proba(X) for est in estimators])
+        if not models:
+            raise ValueError(f"예측 모델을 찾을 수 없습니다. 현재 객체 상태: {list(self.__dict__.keys())}")
 
-        # 3. 가중치 안전하게 추출
+        # 3. 모든 개별 모델의 예측 확률 계산
+        probas = np.array([m.predict_proba(X) for m in models])
+
+        # 4. 가중치 안전 처리 (Weights sum to zero 에러 원천 차단)
         weights = getattr(self, "weights", None)
-
-        # 4. 에러 원천 차단: 가중치가 None이거나, 모델 개수와 다르거나, 합이 0인 경우
-        if weights is None or len(weights) != len(estimators) or np.sum(weights) == 0:
-            # 0으로 나누는 에러를 방지하기 위해 가중치 계산을 생략하고 단순 평균(np.mean) 사용
+        
+        # 가중치가 없거나, 모델 개수와 다르거나, 합이 0인 경우 0으로 나누는 에러를 피해 단순 평균(np.mean) 적용
+        if weights is None or len(weights) != len(models) or np.sum(weights) == 0:
             return np.mean(probas, axis=0)
 
-        # 정상적인 가중치가 존재하는 경우 (np.average가 내부적으로 가중합을 나눠줍니다)
+        # 정상적인 경우 가중 평균 적용
         return np.average(probas, axis=0, weights=weights)
 
     def predict(self, X):
