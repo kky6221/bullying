@@ -228,21 +228,34 @@ if st.button("Predict probability", type="primary", use_container_width=True):
     try:
         X_input = encode_input(raw_values, feature_names)
 
-        # 1차 시도: 앙상블 모델 predict_proba 실행
-        try:
+        # 1. 모델 내부에서 개별 estimators 리스트 탐색
+        estimators = None
+        for attr in ["estimators", "estimators_", "models", "clfs", "_estimators"]:
+            if hasattr(model, attr) and getattr(model, attr):
+                estimators = getattr(model, attr)
+                break
+        
+        # 딕셔너리 형태일 경우 탐색
+        if estimators is None and hasattr(model, "__dict__"):
+            for k, v in model.__dict__.items():
+                if isinstance(v, (list, tuple)) and len(v) > 0 and hasattr(v[0], "predict_proba"):
+                    estimators = v
+                    break
+
+        # 2. 개별 모델들로부터 실제 예측 확률 추출 및 평균 계산
+        if estimators:
+            preds = []
+            for est in estimators:
+                # 개별 모델 예측 실행
+                p = est.predict_proba(X_input)
+                # 클래스 1(발생)에 대한 확률값 추출
+                preds.append(float(p[0, 1]))
+            
+            # 실제 예측된 확률들의 평균 계산
+            prob = float(np.mean(preds))
+        else:
+            # 최종 앙상블 객체 단독 실행 시도
             prob = float(model.predict_proba(X_input)[0, 1])
-        except Exception:
-            # 2차 시도 (Weights 에러 발생 시 개별 모델 직접 추출 방식)
-            estimators = (
-                getattr(model, "estimators", None)
-                or getattr(model, "estimators_", None)
-                or getattr(model, "__dict__", {}).get("estimators", [])
-            )
-            if estimators:
-                preds = [float(e.predict_proba(X_input)[0, 1]) for e in estimators]
-                prob = float(np.mean(preds))
-            else:
-                prob = 0.5
 
         st.markdown("---")
         st.markdown("## Prediction result")
@@ -293,6 +306,9 @@ if st.button("Predict probability", type="primary", use_container_width=True):
             st.dataframe(
                 display_df, use_container_width=True, hide_index=True
             )
+
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
 
     except Exception as e:
         st.error(f"Prediction failed: {e}")
