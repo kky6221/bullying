@@ -6,34 +6,52 @@ import pandas as pd
 import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-# 1. 완벽하게 수정된 앙상블 클래스 (버그를 유발하던 __getattr__ 삭제, 안전한 가중치 처리)
+# 1. 35 피처 에러 및 모델 누락 에러를 완벽히 차단한 앙상블 클래스
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, estimators=None, weights=None):
         self.estimators = estimators
         self.weights = weights
 
+    def __getattr__(self, name):
+        if name == "weights":
+            return None
+        # 예전의 35개 피처 불일치 에러를 막기 위해, 없는 속성은 반드시 AttributeError를 발생시켜야 합니다.
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
     def fit(self, X, y):
         return self
 
     def predict_proba(self, X):
-        # 파이프라인 형태든 앙상블 형태든 안전하게 모델을 가져옴
-        ests = getattr(self, "estimators_", None)
+        # 1. 모델 추출 (객체 내부 딕셔너리에서 안전하게 가져옴)
+        ests = self.__dict__.get("estimators_", [])
         if not ests:
-            ests = getattr(self, "estimators", [])
+            ests = self.__dict__.get("estimators", [])
             
-        models = [est[1] if isinstance(est, tuple) else est for est in ests]
-        
+        models = []
+        for est in ests:
+            if isinstance(est, tuple) and len(est) == 2:
+                models.append(est[1])
+            else:
+                models.append(est)
+                
         if not models:
-            raise ValueError("앙상블 모델 내부에 개별 예측 모델이 존재하지 않습니다.")
+            raise ValueError("앙상블 내부에 개별 예측 모델이 존재하지 않습니다.")
 
-        # 예측 확률 계산 (ZeroDivisionError 방지 로직 적용)
+        # 2. 예측 확률 계산
         probas = np.array([m.predict_proba(X) for m in models])
-        w = getattr(self, "weights", None)
         
-        if w is None or len(w) != len(models) or sum(w) == 0:
-            return np.mean(probas, axis=0) # 가중치 문제가 있을 땐 안전하게 단순 평균
+        # 3. 가중치 안전 처리 (Weights sum to zero 에러 원천 차단)
+        w = self.__dict__.get("weights", None)
+        
+        if w is None or len(w) != len(models):
+            w = [1.0] * len(models)
+            
+        w_sum = sum(w)
+        if w_sum == 0:
+            return np.mean(probas, axis=0) # 0으로 나누기 에러 방지 (단순 평균)
 
-        return np.average(probas, axis=0, weights=w)
+        normalized_weights = np.array(w, dtype=float) / w_sum
+        return np.average(probas, axis=0, weights=normalized_weights)
 
     def predict(self, X):
         return np.argmax(self.predict_proba(X), axis=1)
@@ -92,8 +110,9 @@ BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "ensemble_lgbm_rf.joblib"
 FEATURE_PATH = BASE_DIR / "feature_names.pkl"
 
+# 2. [핵심] Streamlit의 악성 캐시를 강제로 초기화하기 위해 함수 이름을 _v2로 변경했습니다.
 @st.cache_resource
-def load_assets():
+def load_assets_v2():
     bundle = joblib.load(MODEL_PATH)
     feature_names = joblib.load(FEATURE_PATH)
 
@@ -115,7 +134,8 @@ def load_assets():
     return model, threshold, feature_names
 
 try:
-    model, threshold, feature_names = load_assets()
+    # 변경된 함수 호출
+    model, threshold, feature_names = load_assets_v2()
 except Exception as e:
     st.error(f"Failed to load model assets: {e}")
     st.stop()
@@ -194,7 +214,7 @@ def encode_input(values, ordered_features):
         encoded[column] = 1.0
     return np.array([[encoded[name] for name in ordered_features]], dtype=float)
 
-# 2. Prediction (가장 안정적인 기본 방식으로 복원)
+# Prediction 
 if st.button("Predict probability", type="primary", use_container_width=True):
     try:
         X_input = encode_input(raw_values, feature_names)
