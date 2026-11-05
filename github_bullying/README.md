@@ -1,4 +1,4 @@
-# Behavioral Character-Related Bullying Prediction
+# Adolescent Bullying risk Prediction Using Behavioral Characteristics
 
 Streamlit application for estimating the probability of cost-related unmet healthcare needs using the final ensemble LightGBM+RF model.
 
@@ -34,13 +34,13 @@ The app collects 13 predictors:
 12. Physical activity
 13. Recommended sleep duration
 
-Categorical inputs are converted to the same one-hot encoded 32-feature representation used for model training. Feature ordering is loaded directly from `feature\\\_names.pkl`.
+Categorical inputs are converted to the same one-hot encoded 35-feature representation used for model training. Feature ordering is loaded directly from `feature\\\_names.pkl`.
 
 ## GitHub / Streamlit deployment
 
 Upload all required files to the root of one GitHub repository. In Streamlit Community Cloud, select the repository and set the main file path to:
 
-`app.py`
+`app_bullying.py`
 
 ## Intended use
 
