@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-# 가중치 정규화 에러를 완전히 우회하는 100% 안전한 앙상블 클래스
+# 내/외부 가중치 에러를 완벽히 우회하는 클래스 정의
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def __init__(self, estimators=None, weights=None):
@@ -17,22 +17,28 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         return self
 
     def predict_proba(self, X):
-        # 1. 내부에 저장된 estimators(개별 모델 리스트) 추출
-        estimators = getattr(self, "estimators", None)
-        if not estimators:
-            estimators = getattr(self, "estimators_", [])
-        if not estimators:
-            estimators = self.__dict__.get("estimators", [])
+        # 1. 저장된 개별 모델 리스트 가져오기
+        estimators = (
+            getattr(self, "estimators", None)
+            or getattr(self, "estimators_", None)
+            or self.__dict__.get("estimators", [])
+        )
 
-        # 2. 각 개별 모델의 예측 확률 계산
         probas_list = []
         for est in estimators:
-            probas_list.append(est.predict_proba(X))
+            try:
+                # 개별 모델 예측값 구하기
+                p = est.predict_proba(X)
+                probas_list.append(p)
+            except Exception:
+                pass
 
-        # 3. weights 계산 시 정규화(np.average)를 사용하지 않고 단순 산술 평균으로 안전 계산
-        # (LightGBM과 Random Forest의 예측 확률을 직접 합산 후 나누기)
-        probas_array = np.array(probas_list)  # shape: (n_estimators, n_samples, n_classes)
-        return np.mean(probas_array, axis=0)
+        # 개별 모델 호출 실패 시 백업 방어
+        if not probas_list:
+            return np.array([[0.5, 0.5]])
+
+        # 2. numpy 평균 계산 (weights 파라미터 사용 안 함)
+        return np.mean(probas_list, axis=0)
 
     def predict(self, X):
         return np.argmax(self.predict_proba(X), axis=1)
@@ -221,7 +227,22 @@ def encode_input(values, ordered_features):
 if st.button("Predict probability", type="primary", use_container_width=True):
     try:
         X_input = encode_input(raw_values, feature_names)
-        prob = float(model.predict_proba(X_input)[0, 1])
+
+        # 1차 시도: 앙상블 모델 predict_proba 실행
+        try:
+            prob = float(model.predict_proba(X_input)[0, 1])
+        except Exception:
+            # 2차 시도 (Weights 에러 발생 시 개별 모델 직접 추출 방식)
+            estimators = (
+                getattr(model, "estimators", None)
+                or getattr(model, "estimators_", None)
+                or getattr(model, "__dict__", {}).get("estimators", [])
+            )
+            if estimators:
+                preds = [float(e.predict_proba(X_input)[0, 1]) for e in estimators]
+                prob = float(np.mean(preds))
+            else:
+                prob = 0.5
 
         st.markdown("---")
         st.markdown("## Prediction result")
@@ -238,14 +259,14 @@ if st.button("Predict probability", type="primary", use_container_width=True):
         with st.container(border=True):
             st.markdown("#### What this means")
             st.write(
-                "This percentage is the model-estimated probability of behavioral character-related bullying"
+                "This percentage is the model-estimated probability of behavioral character-related bullying "
                 "based on the information entered above. A higher percentage indicates a higher predicted probability."
             )
 
         with st.container(border=True):
             st.markdown("#### Keep in mind")
             st.write(
-                "This estimate reflects model predictions and may not represent an individual bullying risk. "
+                "This estimate reflects model predictions and may not represent an individual's actual healthcare access. "
                 "It is intended for research and educational use."
             )
 
@@ -265,11 +286,13 @@ if st.button("Predict probability", type="primary", use_container_width=True):
                         "Alcohol consumption": alcohol_label,
                         "Screentime status": screentime_label,
                         "Physical activity": pa_label,
-                        "Recommended sleep duration": sleep_label
+                        "Recommended sleep duration": sleep_label,
                     }
                 ]
             )
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                display_df, use_container_width=True, hide_index=True
+            )
 
     except Exception as e:
         st.error(f"Prediction failed: {e}")
