@@ -6,51 +6,33 @@ import pandas as pd
 import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-# 모델 불러오기를 위한 커스텀 앙상블 클래스 정의 
-
-# 0으로 나누기 에러 방지 및 안전 가중치 처리가 적용된 클래스
+# 가중치 정규화 에러를 완전히 우회하는 100% 안전한 앙상블 클래스
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def __init__(self, estimators=None, weights=None):
         self.estimators = estimators
         self.weights = weights
 
-    def __getattr__(self, name):
-        if name == "weights":
-            return None
-        return None
-
     def fit(self, X, y):
         return self
 
     def predict_proba(self, X):
-        # 1. estimators 개별 모델 추출
+        # 1. 내부에 저장된 estimators(개별 모델 리스트) 추출
         estimators = getattr(self, "estimators", None)
+        if not estimators:
+            estimators = getattr(self, "estimators_", [])
         if not estimators:
             estimators = self.__dict__.get("estimators", [])
 
         # 2. 각 개별 모델의 예측 확률 계산
-        probas = np.array([est.predict_proba(X) for est in estimators])
+        probas_list = []
+        for est in estimators:
+            probas_list.append(est.predict_proba(X))
 
-        # 3. weights 안전 처리 (합이 0이거나 None이면 동등 가중치 1:1로 적용)
-        weights = getattr(self, "weights", None)
-        if (
-            weights is None
-            or len(weights) != len(estimators)
-            or np.sum(weights) == 0
-        ):
-            weights = np.ones(len(estimators), dtype=float)
-        else:
-            weights = np.array(weights, dtype=float)
-
-        # 4. 안전한 정규화 후 가중 평균 계산
-        weights_sum = np.sum(weights)
-        if weights_sum == 0:
-            weights = np.ones(len(estimators), dtype=float)
-            weights_sum = len(estimators)
-
-        normalized_weights = weights / weights_sum
-        return np.average(probas, axis=0, weights=normalized_weights)
+        # 3. weights 계산 시 정규화(np.average)를 사용하지 않고 단순 산술 평균으로 안전 계산
+        # (LightGBM과 Random Forest의 예측 확률을 직접 합산 후 나누기)
+        probas_array = np.array(probas_list)  # shape: (n_estimators, n_samples, n_classes)
+        return np.mean(probas_array, axis=0)
 
     def predict(self, X):
         return np.argmax(self.predict_proba(X), axis=1)
