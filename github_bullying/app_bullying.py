@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
+# 1. 완벽하게 수정된 앙상블 클래스 (버그를 유발하던 __getattr__ 삭제, 안전한 가중치 처리)
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, estimators=None, weights=None):
         self.estimators = estimators
@@ -15,45 +16,29 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         return self
 
     def predict_proba(self, X):
-        # 1. 모델 추출: 원본 코드의 추출 방식을 복원하여 누락 방지
-        raw_estimators = getattr(self, "estimators", None)
-        if raw_estimators is None:
-            raw_estimators = self.__dict__.get("estimators", [])
-        
-        if not raw_estimators:
-            raw_estimators = getattr(self, "estimators_", [])
+        # 파이프라인 형태든 앙상블 형태든 안전하게 모델을 가져옴
+        ests = getattr(self, "estimators_", None)
+        if not ests:
+            ests = getattr(self, "estimators", [])
             
-        # 2. 저장 형태에 상관없이 유연하게 모델 객체만 골라내기
-        models = []
-        for est in raw_estimators:
-            # scikit-learn 기본 형태인 ('모델이름', 모델객체) 튜플인 경우
-            if isinstance(est, tuple) and len(est) == 2:
-                models.append(est[1])
-            # 리스트 안에 바로 모델 객체가 들어있는 경우
-            else:
-                models.append(est)
-
-        if not models:
-            raise ValueError(f"예측 모델을 찾을 수 없습니다. 현재 객체 상태: {list(self.__dict__.keys())}")
-
-        # 3. 모든 개별 모델의 예측 확률 계산
-        probas = np.array([m.predict_proba(X) for m in models])
-
-        # 4. 가중치 안전 처리 (Weights sum to zero 에러 원천 차단)
-        weights = getattr(self, "weights", None)
+        models = [est[1] if isinstance(est, tuple) else est for est in ests]
         
-        # 가중치가 없거나, 모델 개수와 다르거나, 합이 0인 경우 0으로 나누는 에러를 피해 단순 평균(np.mean) 적용
-        if weights is None or len(weights) != len(models) or np.sum(weights) == 0:
-            return np.mean(probas, axis=0)
+        if not models:
+            raise ValueError("앙상블 모델 내부에 개별 예측 모델이 존재하지 않습니다.")
 
-        # 정상적인 경우 가중 평균 적용
-        return np.average(probas, axis=0, weights=weights)
+        # 예측 확률 계산 (ZeroDivisionError 방지 로직 적용)
+        probas = np.array([m.predict_proba(X) for m in models])
+        w = getattr(self, "weights", None)
+        
+        if w is None or len(w) != len(models) or sum(w) == 0:
+            return np.mean(probas, axis=0) # 가중치 문제가 있을 땐 안전하게 단순 평균
+
+        return np.average(probas, axis=0, weights=w)
 
     def predict(self, X):
         return np.argmax(self.predict_proba(X), axis=1)
-    
-# Page settings
 
+# Page settings
 st.set_page_config(
     page_title="Adolescent Bullying Prediction Using Behavioral Characteristics",
     page_icon="🛡️",
@@ -103,11 +88,9 @@ with st.container(border=True):
     )
 
 # Load final ensemble LightGBM+RF model and feature order
-
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "ensemble_lgbm_rf.joblib"
 FEATURE_PATH = BASE_DIR / "feature_names.pkl"
-
 
 @st.cache_resource
 def load_assets():
@@ -123,9 +106,7 @@ def load_assets():
 
     feature_names = [str(x) for x in feature_names]
 
-    if len(feature_names) != getattr(
-        model, "n_features_in_", len(feature_names)
-    ):
+    if len(feature_names) != getattr(model, "n_features_in_", len(feature_names)):
         raise ValueError(
             f"Feature mismatch: model expects {getattr(model, 'n_features_in_', 'unknown')} "
             f"features but feature_names.pkl contains {len(feature_names)}."
@@ -140,7 +121,6 @@ except Exception as e:
     st.stop()
 
 # User inputs
-
 st.markdown("### Enter information")
 
 sex_label = st.selectbox("Sex", ["Male", "Female"])
@@ -159,7 +139,7 @@ income_label = st.selectbox("Household income", ["Low", "Lower-middle", "Middle"
 Household_income = {"Low": 1, "Lower-middle": 2, "Middle": 3, "Upper-middle": 4, "High": 5}[income_label]
 
 bmi_label = st.selectbox("BMI group", ["Underweight", "Normal", "Overweight", "Obese"])
-BMI = {"Underweight": 1, "Normal": 2, "Overweight": 3, "Obese": 4,}[bmi_label]
+BMI = {"Underweight": 1, "Normal": 2, "Overweight": 3, "Obese": 4}[bmi_label]
 
 sadness_label = st.selectbox("Sadness and despair", ["No", "Yes"])
 Sadness_and_despair = {"No": 0, "Yes": 1}[sadness_label]
@@ -173,18 +153,16 @@ Smoking_status = {"Nonsmoker": 0, "Smoker": 1}[smoking_label]
 alcohol_label = st.selectbox("Alcohol consumption",["Nondrinker", "More than one time"])
 Alcohol_consumption = {"Nondrinker": 0, "More than one time": 1}[alcohol_label]
 
-screentime_label = st.selectbox("Screentime status",["Low", "High"],)
+screentime_label = st.selectbox("Screentime status",["Low", "High"])
 Screentime_status = {"Low": 0, "High": 1}[screentime_label]
 
 pa_label = st.selectbox("Physical activity", ["Infrequent", "Adequate"])
 Physical_activity = {"Infrequent": 0, "Adequate": 1}[pa_label]
 
-sleep_label = st.selectbox("Recommended_sleep_duration", ["No", "Yes"])
+sleep_label = st.selectbox("Recommended sleep duration", ["No", "Yes"])
 Recommended_sleep_duration = {"No": 0, "Yes": 1}[sleep_label]
 
-
 # Reproduce the one-hot encoding used for model training
-
 raw_values = {
     "Sex": Sex,
     "Grade": Grade,
@@ -203,70 +181,24 @@ raw_values = {
 
 def encode_input(values, ordered_features):
     encoded = {name: 0.0 for name in ordered_features}
-
     categorical_vars = [
-        "Sex",
-        "Grade",
-        "Region",
-        "BMI",
-        "Academic_achievement",
-        "Household_income",
-        "Sadness_and_despair",
-        "Self_weight",
-        "Smoking_status",
-        "Alcohol_consumption",
-        "Screentime_status",
-        "Exercise_status",
-        "Sleep_duration"
+        "Sex", "Grade", "Region", "BMI", "Academic_achievement",
+        "Household_income", "Sadness_and_despair", "Self_weight",
+        "Smoking_status", "Alcohol_consumption", "Screentime_status",
+        "Exercise_status", "Sleep_duration"
     ]
-
     for variable in categorical_vars:
         column = f"{variable}_{values[variable]}"
         if column not in encoded:
             raise ValueError(f"Encoded feature '{column}' is not present in feature_names.pkl.")
         encoded[column] = 1.0
-
-    # The fitted model was trained on a 32-column one-hot encoded matrix.
     return np.array([[encoded[name] for name in ordered_features]], dtype=float)
 
-
-# Prediction
-
-# Prediction
-
+# 2. Prediction (가장 안정적인 기본 방식으로 복원)
 if st.button("Predict probability", type="primary", use_container_width=True):
     try:
         X_input = encode_input(raw_values, feature_names)
-        
-        # --- [최종 해결책] 고장난 앙상블 클래스를 버리고 직접 모델을 추출하여 계산합니다 ---
-        # 1. 버그가 있는 __getattr__를 피하기 위해 객체 내부 딕셔너리(__dict__)에 직접 접근
-        model_dict = model.__dict__
-        
-        raw_ests = model_dict.get("estimators_", None)
-        if raw_ests is None:
-            raw_ests = model_dict.get("estimators", [])
-            
-        # 2. 저장 형태에 구애받지 않고 실제 모델 객체만 강제 수집
-        models = []
-        for est in raw_ests:
-            if isinstance(est, tuple) and len(est) == 2:
-                models.append(est[1])
-            else:
-                models.append(est)
-                
-        if not models:
-            raise ValueError("저장된 모델(joblib) 내부에 예측 모델 데이터가 존재하지 않습니다.")
-
-        # 3. 빼낸 개별 모델들로 직접 예측 확률 계산
-        probas = np.array([m.predict_proba(X_input) for m in models])
-        
-        # 4. 가중치 안전 추출 및 0으로 나누기 에러(ZeroDivision) 원천 차단
-        weights = model_dict.get("weights", None)
-        if weights is None or len(weights) != len(models) or np.sum(weights) == 0:
-            prob = float(np.mean(probas, axis=0)[0, 1])
-        else:
-            prob = float(np.average(probas, axis=0, weights=weights)[0, 1])
-        # -----------------------------------------------------------------------
+        prob = float(model.predict_proba(X_input)[0, 1])
 
         st.markdown("---")
         st.markdown("## Prediction result")
@@ -283,7 +215,7 @@ if st.button("Predict probability", type="primary", use_container_width=True):
         with st.container(border=True):
             st.markdown("#### What this means")
             st.write(
-                "This percentage is the model-estimated probability of behavioral character-related bullying"
+                "This percentage is the model-estimated probability of behavioral character-related bullying "
                 "based on the information entered above. A higher percentage indicates a higher predicted probability."
             )
 
@@ -295,25 +227,23 @@ if st.button("Predict probability", type="primary", use_container_width=True):
             )
 
         with st.expander("View information used for this prediction"):
-            display_df = pd.DataFrame(
-                [
-                    {
-                        "Sex": sex_label,
-                        "Grade": grade_label,
-                        "Region of residence": region_label,
-                        "Academic achievement": academic_label,
-                        "Household income": income_label,
-                        "BMI group": bmi_label,
-                        "Sadness and despair": sadness_label,
-                        "Subjective body shape perception": body_label,
-                        "Smoking status": smoking_label,
-                        "Alcohol consumption": alcohol_label,
-                        "Screentime status": screentime_label,
-                        "Physical activity": pa_label,
-                        "Recommended sleep duration": sleep_label
-                    }
-                ]
-            )
+            display_df = pd.DataFrame([
+                {
+                    "Sex": sex_label,
+                    "Grade": grade_label,
+                    "Region of residence": region_label,
+                    "Academic achievement": academic_label,
+                    "Household income": income_label,
+                    "BMI group": bmi_label,
+                    "Sadness and despair": sadness_label,
+                    "Subjective body shape perception": body_label,
+                    "Smoking status": smoking_label,
+                    "Alcohol consumption": alcohol_label,
+                    "Screentime status": screentime_label,
+                    "Physical activity": pa_label,
+                    "Recommended sleep duration": sleep_label
+                }
+            ])
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     except Exception as e:
