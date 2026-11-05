@@ -4,12 +4,54 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
+from sklearn.base import BaseEstimator, ClassifierMixin
 
+# 모델 불러오기를 위한 커스텀 앙상블 클래스 정의 
+
+class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
+
+    def __init__(self, estimators=None, weights=None):
+        self.estimators = estimators
+        self.weights = weights
+
+    # 객체에 존재하지 않는 모든 속성 접근을 가로채서 에러 대신 None 리턴
+    def __getattr__(self, name):
+        if name == "weights":
+            return None
+        return None
+
+    def fit(self, X, y):
+        return self
+
+    def predict_proba(self, X):
+        # 1. 개별 모델(estimators) 안전하게 추출
+        estimators = getattr(self, "estimators", None)
+        if estimators is None:
+            estimators = self.__dict__.get("estimators", [])
+
+        # 2. 가중치(weights) 안전하게 추출
+        try:
+            weights = self.weights
+        except Exception:
+            weights = None
+
+        if weights is None or len(weights) != len(estimators):
+            weights = [1.0] * len(estimators)
+
+        normalized_weights = np.array(weights, dtype=float) / sum(weights)
+
+        # 3. 예측 확률 계산
+        probas = np.array([est.predict_proba(X) for est in estimators])
+        return np.average(probas, axis=0, weights=normalized_weights)
+
+    def predict(self, X):
+        return np.argmax(self.predict_proba(X), axis=1)
+    
 # Page settings
 
 st.set_page_config(
-    page_title="Behavior Character-Related Bullying Prediction",
-    page_icon="🏥",
+    page_title="Adolescent Bullying Prediction Using Behavioral Characteristics",
+    page_icon="🛡️",
     layout="centered",
 )
 
@@ -42,22 +84,22 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Behavioral Character-Related Bullying Prediction")
+st.title("Adolescent Bullying Prediction Using Behavioral Characteristics")
 st.markdown(
-    '<div class="app-subtitle">A research-based tool for estimating the probability of cost-related unmet healthcare needs.</div>',
+    '<div class="app-subtitle">A research-based tool for predicting bullying using behavioral characteristics.</div>',
     unsafe_allow_html=True,
 )
 
 with st.container(border=True):
     st.markdown("#### Before you begin")
     st.write(
-        "This tool provides a model-based estimate for research and educational purposes. "
-        "It should not be used as the sole basis for medical, financial, or healthcare decisions."
+        "This tool uses machine learning models to estimate the likelihood of bullying among adolescents based on their behavioral characteristics."
+        "It is used for research and educational purposes and should not be interpreted as a definitive assessment of individual bullying risk."
     )
 
 # Load final ensemble LightGBM+RF model and feature order
 
-BASE_DIR = Path.cwd()
+BASE_DIR = Path(r"\\synologynas\KKDH\김가윤\4. ML [bullying]\github_bullying")
 MODEL_PATH = BASE_DIR / "ensemble_lgbm_rf.joblib"
 FEATURE_PATH = BASE_DIR / "feature_names.pkl"
 
@@ -67,14 +109,19 @@ def load_assets():
     bundle = joblib.load(MODEL_PATH)
     feature_names = joblib.load(FEATURE_PATH)
 
-    if not isinstance(bundle, dict) or "model" not in bundle:
-        raise ValueError("ensemble_lgbm_rf.joblib must contain a dictionary with a 'model' key.")
+    # bundle이 딕셔너리 형태로 저장된 경우와 모델 객체로 직접 저장된 경우 모두 처리
+    if isinstance(bundle, dict):
+        model = bundle.get("model", bundle)
+        threshold = bundle.get("threshold", None)
+    else:
+        model = bundle
+        threshold = None
 
-    model = bundle["model"]
-    threshold = bundle.get("threshold", None)
     feature_names = [str(x) for x in feature_names]
 
-    if len(feature_names) != getattr(model, "n_features_in_", len(feature_names)):
+    if len(feature_names) != getattr(
+        model, "n_features_in_", len(feature_names)
+    ):
         raise ValueError(
             f"Feature mismatch: model expects {getattr(model, 'n_features_in_', 'unknown')} "
             f"features but feature_names.pkl contains {len(feature_names)}."
@@ -143,12 +190,12 @@ raw_values = {
     "Academic_achievement": Academic_achievement,
     "Household_income": Household_income,
     "Sadness_and_despair": Sadness_and_despair,
-    "Subjective body shape perception": Subjective_body_shape_perception,
+    "Self_weight": Subjective_body_shape_perception,
     "Smoking_status": Smoking_status,
     "Alcohol_consumption": Alcohol_consumption,
     "Screentime_status": Screentime_status,
-    "Physical_activity": Physical_activity,
-    "Recommended_sleep_duration": Recommended_sleep_duration
+    "Exercise_status": Physical_activity,
+    "Sleep_duration": Recommended_sleep_duration
 }
 
 def encode_input(values, ordered_features):
@@ -162,12 +209,12 @@ def encode_input(values, ordered_features):
         "Academic_achievement",
         "Household_income",
         "Sadness_and_despair",
-        "Subjective_body_shape_perception",
+        "Self_weight",
         "Smoking_status",
         "Alcohol_consumption",
         "Screentime_status",
-        "Physical_activity",
-        "Recommended_sleep_duration"
+        "Exercise_status",
+        "Sleep_duration"
     ]
 
     for variable in categorical_vars:
@@ -209,7 +256,7 @@ if st.button("Predict probability", type="primary", use_container_width=True):
         with st.container(border=True):
             st.markdown("#### Keep in mind")
             st.write(
-                "This estimate reflects model predictions and may not represent an individual's actual healthcare access. "
+                "This estimate reflects model predictions and may not represent an individual bullying risk. "
                 "It is intended for research and educational use."
             )
 
