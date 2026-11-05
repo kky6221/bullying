@@ -11,8 +11,6 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         self.estimators = estimators
         self.weights = weights
 
-    # 문제가 되던 __getattr__ 메서드는 완전히 삭제합니다. (scikit-learn 기본 동작을 따르게 함)
-
     def fit(self, X, y):
         return self
 
@@ -116,6 +114,9 @@ def load_assets():
         model = bundle
         threshold = None
 
+    # 🚨 [핵심 해결책] 불러온 과거의 모델 객체에, 현재 파일에서 새로 수정한 클래스를 강제로 주입합니다.
+    model.__class__ = VotingEnsembleClassifier
+
     feature_names = [str(x) for x in feature_names]
 
     if len(feature_names) != getattr(
@@ -127,7 +128,6 @@ def load_assets():
         )
 
     return model, threshold, feature_names
-
 
 try:
     model, threshold, feature_names = load_assets()
