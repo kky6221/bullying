@@ -7,46 +7,41 @@ import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
-
     def __init__(self, estimators=None, weights=None):
         self.estimators = estimators
         self.weights = weights
 
-    def __getattr__(self, name):
-        if name == "weights":
-            return None
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    # 문제가 되던 __getattr__ 메서드는 완전히 삭제합니다. (scikit-learn 기본 동작을 따르게 함)
 
     def fit(self, X, y):
         return self
 
     def predict_proba(self, X):
-        # 1. 개별 모델(estimators) 안전하게 추출
-        estimators = getattr(self, "estimators", None)
+        # 1. 모델 추출 (sklearn 호환성 보장)
+        estimators = getattr(self, "estimators_", None)
         if estimators is None:
-            estimators = self.__dict__.get("estimators", [])
+            estimators = getattr(self, "estimators", [])
+        
+        # 튜플 형태(이름, 모델)로 저장된 경우 모델(객체)만 추출
+        if estimators and isinstance(estimators[0], tuple):
+            estimators = [est for _, est in estimators]
+            
+        if not estimators:
+            raise ValueError("앙상블에 포함된 예측 모델(estimators)이 없습니다.")
 
-        # 2. 가중치(weights) 안전하게 추출
-        try:
-            weights = self.weights
-        except Exception:
-            weights = None
-
-        # 가중치가 없거나 길이가 맞지 않으면 균등 가중치로 초기화
-        if weights is None or len(weights) != len(estimators):
-            weights = [1.0] * len(estimators)
-
-        # 3. 가중치 합이 0인 경우(Weights sum to zero 에러 방지) 균등 가중치로 재설정
-        weight_sum = sum(weights)
-        if weight_sum == 0:
-            weights = [1.0] * len(estimators)
-            weight_sum = sum(weights)
-
-        normalized_weights = np.array(weights, dtype=float) / weight_sum
-
-        # 4. 예측 확률 계산
+        # 2. 모든 개별 모델의 예측 확률 계산
         probas = np.array([est.predict_proba(X) for est in estimators])
-        return np.average(probas, axis=0, weights=normalized_weights)
+
+        # 3. 가중치 안전하게 추출
+        weights = getattr(self, "weights", None)
+
+        # 4. 에러 원천 차단: 가중치가 None이거나, 모델 개수와 다르거나, 합이 0인 경우
+        if weights is None or len(weights) != len(estimators) or np.sum(weights) == 0:
+            # 0으로 나누는 에러를 방지하기 위해 가중치 계산을 생략하고 단순 평균(np.mean) 사용
+            return np.mean(probas, axis=0)
+
+        # 정상적인 가중치가 존재하는 경우 (np.average가 내부적으로 가중합을 나눠줍니다)
+        return np.average(probas, axis=0, weights=weights)
 
     def predict(self, X):
         return np.argmax(self.predict_proba(X), axis=1)
