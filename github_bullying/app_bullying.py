@@ -119,12 +119,11 @@ def load_assets():
 
     feature_names = [str(x) for x in feature_names]
 
-    if len(feature_names) != getattr(
-        model, "n_features_in_", len(feature_names)
-    ):
+    # n_features_in_ 속성이 존재하고 None이 아닐 때만 개수 검증 수행
+    expected_n = getattr(model, "n_features_in_", None)
+    if expected_n is not None and len(feature_names) != expected_n:
         raise ValueError(
-            f"Feature mismatch: model expects {getattr(model, 'n_features_in_', 'unknown')} "
-            f"features but feature_names.pkl contains {len(feature_names)}."
+            f"Feature mismatch: model expects {expected_n} features but feature_names.pkl contains {len(feature_names)}."
         )
 
     return model, threshold, feature_names
