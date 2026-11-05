@@ -12,11 +12,9 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         self.estimators = estimators
         self.weights = weights
 
-    # 객체에 존재하지 않는 속성 접근을 가로챌 때, 정의되지 않은 속성은 AttributeError를 발생시켜야 함
     def __getattr__(self, name):
         if name == "weights":
             return None
-        # getattr()의 기본값 처리가 정상 동작하도록 AttributeError 발생
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def fit(self, X, y):
@@ -34,12 +32,19 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         except Exception:
             weights = None
 
+        # 가중치가 없거나 길이가 맞지 않으면 균등 가중치로 초기화
         if weights is None or len(weights) != len(estimators):
             weights = [1.0] * len(estimators)
 
-        normalized_weights = np.array(weights, dtype=float) / sum(weights)
+        # 3. 가중치 합이 0인 경우(Weights sum to zero 에러 방지) 균등 가중치로 재설정
+        weight_sum = sum(weights)
+        if weight_sum == 0:
+            weights = [1.0] * len(estimators)
+            weight_sum = sum(weights)
 
-        # 3. 예측 확률 계산
+        normalized_weights = np.array(weights, dtype=float) / weight_sum
+
+        # 4. 예측 확률 계산
         probas = np.array([est.predict_proba(X) for est in estimators])
         return np.average(probas, axis=0, weights=normalized_weights)
 
