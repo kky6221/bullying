@@ -99,7 +99,7 @@ with st.container(border=True):
 
 # Load final ensemble LightGBM+RF model and feature order
 
-BASE_DIR = Path(r"\\synologynas\KKDH\김가윤\4. ML [bullying]\github_bullying")
+BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "ensemble_lgbm_rf.joblib"
 FEATURE_PATH = BASE_DIR / "feature_names.pkl"
 
