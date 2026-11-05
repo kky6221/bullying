@@ -232,10 +232,41 @@ def encode_input(values, ordered_features):
 
 # Prediction
 
+# Prediction
+
 if st.button("Predict probability", type="primary", use_container_width=True):
     try:
         X_input = encode_input(raw_values, feature_names)
-        prob = float(model.predict_proba(X_input)[0, 1])
+        
+        # --- [최종 해결책] 고장난 앙상블 클래스를 버리고 직접 모델을 추출하여 계산합니다 ---
+        # 1. 버그가 있는 __getattr__를 피하기 위해 객체 내부 딕셔너리(__dict__)에 직접 접근
+        model_dict = model.__dict__
+        
+        raw_ests = model_dict.get("estimators_", None)
+        if raw_ests is None:
+            raw_ests = model_dict.get("estimators", [])
+            
+        # 2. 저장 형태에 구애받지 않고 실제 모델 객체만 강제 수집
+        models = []
+        for est in raw_ests:
+            if isinstance(est, tuple) and len(est) == 2:
+                models.append(est[1])
+            else:
+                models.append(est)
+                
+        if not models:
+            raise ValueError("저장된 모델(joblib) 내부에 예측 모델 데이터가 존재하지 않습니다.")
+
+        # 3. 빼낸 개별 모델들로 직접 예측 확률 계산
+        probas = np.array([m.predict_proba(X_input) for m in models])
+        
+        # 4. 가중치 안전 추출 및 0으로 나누기 에러(ZeroDivision) 원천 차단
+        weights = model_dict.get("weights", None)
+        if weights is None or len(weights) != len(models) or np.sum(weights) == 0:
+            prob = float(np.mean(probas, axis=0)[0, 1])
+        else:
+            prob = float(np.average(probas, axis=0, weights=weights)[0, 1])
+        # -----------------------------------------------------------------------
 
         st.markdown("---")
         st.markdown("## Prediction result")
