@@ -70,7 +70,7 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
 # Page settings
 st.set_page_config(
-    page_title="Adolescent Bullying Prediction Using Behavioral Characteristics",
+    page_title="Adolescent Bullying risk Prediction Using Behavioral Characteristics",
     page_icon="🛡️",
     layout="centered",
 )
@@ -104,17 +104,17 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Adolescent Bullying Prediction Using Behavioral Characteristics")
+st.title("Adolescent Bullying risk Prediction Using Behavioral Characteristics")
 st.markdown(
-    '<div class="app-subtitle">A research-based tool for predicting bullying using behavioral characteristics.</div>',
+    '<div class="app-subtitle">A research-based tool for predicting bullying risk using behavioral characteristics.</div>',
     unsafe_allow_html=True,
 )
 
 with st.container(border=True):
     st.markdown("#### Before you begin")
     st.write(
-        "This tool uses machine learning models to estimate the likelihood of bullying among adolescents based on their behavioral characteristics."
-        "It is used for research and educational purposes and should not be interpreted as a definitive assessment of individual bullying risk."
+        "This tool uses machine learning models to estimate the likelihood of bullying risk among adolescents based on their behavioral characteristics."
+        " It is used for research and educational purposes and should not be interpreted as a definitive assessment of individual bullying risk."
     )
 
 # Load final ensemble LightGBM+RF model and feature order
@@ -247,15 +247,8 @@ if st.button("Predict probability", type="primary", use_container_width=True):
         with st.container(border=True):
             st.markdown("#### What this means")
             st.write(
-                "This percentage is the model-estimated probability of behavioral character-related bullying "
+                "This percentage is the model-estimated probability of behavioral characteristics-related bullying risk "
                 "based on the information entered above. A higher percentage indicates a higher predicted probability."
-            )
-
-        with st.container(border=True):
-            st.markdown("#### Keep in mind")
-            st.write(
-                "This estimate reflects model predictions and may not represent an individual bullying risk. "
-                "It is intended for research and educational use."
             )
 
         with st.expander("View information used for this prediction"):
