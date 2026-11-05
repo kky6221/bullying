@@ -6,55 +6,67 @@ import pandas as pd
 import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-# 1. 35 피처 에러 및 모델 누락 에러를 완벽히 차단한 앙상블 클래스
+# 1. 어떤 악조건에서도 모델을 강제로 찾아내고, 에러를 무시하는 완벽 방어 클래스
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, estimators=None, weights=None):
         self.estimators = estimators
         self.weights = weights
 
     def __getattr__(self, name):
-        if name == "weights":
-            return None
-        # 예전의 35개 피처 불일치 에러를 막기 위해, 없는 속성은 반드시 AttributeError를 발생시켜야 합니다.
+        # scikit-learn의 n_features_in_ 등 속성 검사 시 에러 없이 통과하도록 표준 방식을 따름
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def fit(self, X, y):
         return self
 
     def predict_proba(self, X):
-        # 1. 모델 추출 (객체 내부 딕셔너리에서 안전하게 가져옴)
-        ests = self.__dict__.get("estimators_", [])
-        if not ests:
-            ests = self.__dict__.get("estimators", [])
-            
         models = []
-        for est in ests:
-            if isinstance(est, tuple) and len(est) == 2:
-                models.append(est[1])
-            else:
-                models.append(est)
+        
+        # [핵심] 1. 객체 내부에 저장된 모든 리스트를 샅샅이 뒤져서 예측 모델을 강제로 찾아냅니다.
+        for key, val in self.__dict__.items():
+            if isinstance(val, (list, tuple)) and len(val) > 0:
+                for item in val:
+                    # 단일 모델 객체인 경우
+                    if hasattr(item, 'predict_proba') and item is not self:
+                        if item not in models:
+                            models.append(item)
+                    # (이름, 모델) 튜플 형태인 경우
+                    elif isinstance(item, tuple) and len(item) >= 2:
+                        if hasattr(item[1], 'predict_proba') and item[1] is not self:
+                            if item[1] not in models:
+                                models.append(item[1])
+            if models:
+                break # 모델을 하나라도 찾았으면 탐색 종료
                 
+        # [핵심] 2. 리스트가 아니라 개별 변수(예: self.model1, self.model2)로 저장된 경우도 대비
         if not models:
-            raise ValueError("앙상블 내부에 개별 예측 모델이 존재하지 않습니다.")
+            for key, val in self.__dict__.items():
+                if hasattr(val, 'predict_proba') and val is not self:
+                    models.append(val)
+                    
+        # 3. 그래도 없으면 객체의 현재 상태를 화면에 출력하여 원인을 즉시 파악할 수 있게 함
+        if not models:
+            keys = list(self.__dict__.keys())
+            raise ValueError(f"저장된 모델 파일 안에 예측 모델이 없습니다. 발견된 내부 속성들: {keys}")
 
-        # 2. 예측 확률 계산
+        # 4. 각 모델별 예측 확률 계산
         probas = np.array([m.predict_proba(X) for m in models])
         
-        # 3. 가중치 안전 처리 (Weights sum to zero 에러 원천 차단)
-        w = self.__dict__.get("weights", None)
-        
-        if w is None or len(w) != len(models):
-            w = [1.0] * len(models)
+        # 5. 가중치(Weights) 0으로 나누기 에러 원천 차단
+        try:
+            w = self.weights
+            if w is not None and len(w) == len(models) and sum(w) > 0:
+                w_norm = np.array(w, dtype=float) / sum(w)
+                return np.average(probas, axis=0, weights=w_norm)
+        except Exception:
+            pass # 가중치 계산 중 어떤 에러라도 발생하면 아래의 단순 평균으로 우회
             
-        w_sum = sum(w)
-        if w_sum == 0:
-            return np.mean(probas, axis=0) # 0으로 나누기 에러 방지 (단순 평균)
-
-        normalized_weights = np.array(w, dtype=float) / w_sum
-        return np.average(probas, axis=0, weights=normalized_weights)
+        # 가중치에 문제가 있으면 가장 안전한 '단순 평균'으로 결과를 무조건 반환
+        return np.mean(probas, axis=0)
 
     def predict(self, X):
         return np.argmax(self.predict_proba(X), axis=1)
+
 
 # Page settings
 st.set_page_config(
@@ -110,9 +122,9 @@ BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "ensemble_lgbm_rf.joblib"
 FEATURE_PATH = BASE_DIR / "feature_names.pkl"
 
-# 2. [핵심] Streamlit의 악성 캐시를 강제로 초기화하기 위해 함수 이름을 _v2로 변경했습니다.
+# 2. [캐시 초기화용] 함수 이름을 load_assets_final로 변경하여 깃허브 배포 시 악성 캐시가 완전히 무효화되도록 처리
 @st.cache_resource
-def load_assets_v2():
+def load_assets_final():
     bundle = joblib.load(MODEL_PATH)
     feature_names = joblib.load(FEATURE_PATH)
 
@@ -125,6 +137,7 @@ def load_assets_v2():
 
     feature_names = [str(x) for x in feature_names]
 
+    # getattr 기본값 동작 정상화
     if len(feature_names) != getattr(model, "n_features_in_", len(feature_names)):
         raise ValueError(
             f"Feature mismatch: model expects {getattr(model, 'n_features_in_', 'unknown')} "
@@ -134,8 +147,7 @@ def load_assets_v2():
     return model, threshold, feature_names
 
 try:
-    # 변경된 함수 호출
-    model, threshold, feature_names = load_assets_v2()
+    model, threshold, feature_names = load_assets_final()
 except Exception as e:
     st.error(f"Failed to load model assets: {e}")
     st.stop()
