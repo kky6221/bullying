@@ -8,13 +8,13 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 
 # 모델 불러오기를 위한 커스텀 앙상블 클래스 정의 
 
+# 0으로 나누기 에러 방지 및 안전 가중치 처리가 적용된 클래스
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def __init__(self, estimators=None, weights=None):
         self.estimators = estimators
         self.weights = weights
 
-    # 객체에 존재하지 않는 모든 속성 접근을 가로채서 에러 대신 None 리턴
     def __getattr__(self, name):
         if name == "weights":
             return None
@@ -24,22 +24,37 @@ class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
         return self
 
     def predict_proba(self, X):
-        # 1. 개별 모델(estimators) 안전하게 추출
+        # 1. estimators 개별 모델 추출
         estimators = getattr(self, "estimators", None)
-        if estimators is None:
+        if not estimators:
             estimators = self.__dict__.get("estimators", [])
 
-        # 2. 가중치(weights) 안전하게 추출
-        try:
-            weights = self.weights
-        except Exception:
-            weights = None
+        # 2. 각 개별 모델의 예측 확률 계산
+        probas = np.array([est.predict_proba(X) for est in estimators])
 
-        if weights is None or len(weights) != len(estimators):
-            weights = [1.0] * len(estimators)
+        # 3. weights 안전 처리 (합이 0이거나 None이면 동등 가중치 1:1로 적용)
+        weights = getattr(self, "weights", None)
+        if (
+            weights is None
+            or len(weights) != len(estimators)
+            or np.sum(weights) == 0
+        ):
+            weights = np.ones(len(estimators), dtype=float)
+        else:
+            weights = np.array(weights, dtype=float)
 
-        normalized_weights = np.array(weights, dtype=float) / sum(weights)
+        # 4. 안전한 정규화 후 가중 평균 계산
+        weights_sum = np.sum(weights)
+        if weights_sum == 0:
+            weights = np.ones(len(estimators), dtype=float)
+            weights_sum = len(estimators)
 
+        normalized_weights = weights / weights_sum
+        return np.average(probas, axis=0, weights=normalized_weights)
+
+    def predict(self, X):
+        return np.argmax(self.predict_proba(X), axis=1)
+        
         # 3. 예측 확률 계산
         probas = np.array([est.predict_proba(X) for est in estimators])
         return np.average(probas, axis=0, weights=normalized_weights)
