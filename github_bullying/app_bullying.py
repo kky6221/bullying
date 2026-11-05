@@ -6,19 +6,18 @@ import pandas as pd
 import streamlit as st
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-# 모델 불러오기를 위한 커스텀 앙상블 클래스 정의 
-
 class VotingEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def __init__(self, estimators=None, weights=None):
         self.estimators = estimators
         self.weights = weights
 
-    # 객체에 존재하지 않는 모든 속성 접근을 가로채서 에러 대신 None 리턴
+    # 객체에 존재하지 않는 속성 접근을 가로챌 때, 정의되지 않은 속성은 AttributeError를 발생시켜야 함
     def __getattr__(self, name):
         if name == "weights":
             return None
-        return None
+        # getattr()의 기본값 처리가 정상 동작하도록 AttributeError 발생
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def fit(self, X, y):
         return self
