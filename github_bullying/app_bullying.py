@@ -179,10 +179,10 @@ Sadness_and_despair = {"No": 0, "Yes": 1}[sadness_label]
 body_label = st.selectbox("Subjective body shape perception", ["Thin", "Normal", "Obese"])
 Subjective_body_shape_perception = {"Thin": 1, "Normal": 2, "Obese": 3}[body_label]
 
-smoking_label = st.selectbox("Smoking status", ["Nonsmoker", "Smoker"])
+smoking_label = st.selectbox("Smoking status", ["Non-smoker", "Smoker"])
 Smoking_status = {"Nonsmoker": 0, "Smoker": 1}[smoking_label]
 
-alcohol_label = st.selectbox("Alcohol consumption",["Nondrinker", "More than one time"])
+alcohol_label = st.selectbox("Alcohol consumption",["Non-drinker", "More than one time"])
 Alcohol_consumption = {"Nondrinker": 0, "More than one time": 1}[alcohol_label]
 
 screentime_label = st.selectbox("Screentime status",["Low", "High"])
