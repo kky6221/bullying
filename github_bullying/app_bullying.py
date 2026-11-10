@@ -180,10 +180,10 @@ body_label = st.selectbox("Subjective body shape perception", ["Thin", "Normal",
 Subjective_body_shape_perception = {"Thin": 1, "Normal": 2, "Obese": 3}[body_label]
 
 smoking_label = st.selectbox("Smoking status", ["Non-smoker", "Smoker"])
-Smoking_status = {"Nonsmoker": 0, "Smoker": 1}[smoking_label]
+Smoking_status = {"Non-smoker": 0, "Smoker": 1}[smoking_label]
 
 alcohol_label = st.selectbox("Alcohol consumption",["Non-drinker", "More than one time"])
-Alcohol_consumption = {"Nondrinker": 0, "More than one time": 1}[alcohol_label]
+Alcohol_consumption = {"Non-drinker": 0, "More than one time": 1}[alcohol_label]
 
 screentime_label = st.selectbox("Screentime status",["Low", "High"])
 Screentime_status = {"Low": 0, "High": 1}[screentime_label]
